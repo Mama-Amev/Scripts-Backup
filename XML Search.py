@@ -1,6 +1,6 @@
 # Before using the script, do note that this monstrosity is held together
 # with bubble gum, shoe laces, and prayer. There is an 80% chance this
-# script will completely break in usage, so please be mindful of that.
+# script will completely break on usage, so please be mindful of that.
 # Main goal of this script is to scan through a several hundred .XML
 # files and put specific keywords into a .csv file. It is built
 # for a specific usage, so it may not work entirely unless

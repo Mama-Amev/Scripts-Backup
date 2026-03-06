@@ -1,46 +1,86 @@
-Add-Type -AssemblyName Microsoft.VisualBasic
+import subprocess
+import os
+import sys
+import traceback
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+BASE_DIR = r"C:\PATH\TO\FILE"
+LOG_DIR = os.path.join(BASE_DIR, "Logs")
 
-# Change folders based on where thumbnails, clips, and edits folder is located.
-$folders = @(
-    "D:\Medal\.Thumbnails",
-    "D:\Medal\Clips",
-    "D:\Medal\Edits",
-    "D:\Medal\editor\render"
-)
+FOLDERS = [
+    "Pancake"
+]
 
-foreach ($folder in $folders) {
-    if (Test-Path $folder) {
+# Firefox is the preferred browser, Chrome does not like to work well with it, and forks of firefox don't work.
+GALLERY_CMD = "gallery-dl --cookies-from-browser firefox -i file.txt"
 
-        Write-Host "Cleaning $folder"
+def ensure_logs():
+    os.makedirs(LOG_DIR, exist_ok=True)
 
-        # Delete all files (to Recycle Bin)
-        Get-ChildItem $folder -Recurse -Force -File | ForEach-Object {
-            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
-                $_.FullName,
-                'OnlyErrorDialogs',
-                'SendToRecycleBin'
-            )
-        }
+def log_error(folder, error):
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = os.path.join(LOG_DIR, f"{folder}_error_{timestamp}.log")
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write(error)
 
-        # Delete all subfolders (to Recycle Bin)
-        Get-ChildItem $folder -Recurse -Force -Directory | ForEach-Object {
-            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
-                $_.FullName,
-                'OnlyErrorDialogs',
-                'SendToRecycleBin'
-            )
-        }
-    }
-}
+def run_command(command, cwd):
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    stdout, stderr = process.communicate()
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"Command failed:\n{command}\n\n"
+            f"STDOUT:\n{stdout}\n\nSTDERR:\n{stderr}"
+        )
 
-Write-Host "Clearing Recycle Bin..."
+def process_folder(folder):
+    folder_path = os.path.join(BASE_DIR, folder)
+    ps1_script = os.path.join(folder_path, f"{folder}.ps1")
 
-# Empty the Recycle Bin (no prompt)
-# "0x0007" means: no confirmation, no progress UI, no sound
-# This permanently deletes everything currently in the Recycle Bin
-(New-Object -ComObject Shell.Application).NameSpace(0xA).Items() |
-    ForEach-Object { Remove-Item $_.Path -Recurse -Force -ErrorAction SilentlyContinue }
+    try:
+        # Run gallery-dl
+        run_command(GALLERY_CMD, cwd=folder_path)
 
-Write-Host "All Medal folders cleaned and Recycle Bin emptied."
-Start-Sleep -Seconds 2
+        # Run PowerShell script after download
+        if not os.path.isfile(ps1_script):
+            raise FileNotFoundError(f"Missing PowerShell script: {ps1_script}")
+
+        run_command(
+            f'powershell -ExecutionPolicy Bypass -File "{ps1_script}"',
+            cwd=folder_path
+        )
+
+        return f"{folder}: completed successfully"
+
+    except Exception as e:
+        error_details = (
+            f"Folder: {folder}\n"
+            f"Time: {datetime.now()}\n\n"
+            f"{str(e)}\n\n"
+            f"Traceback:\n{traceback.format_exc()}"
+        )
+        log_error(folder, error_details)
+        raise
+
+def main():
+    ensure_logs()
+
+    with ThreadPoolExecutor(max_workers=len(FOLDERS)) as executor:
+        futures = {executor.submit(process_folder, folder): folder for folder in FOLDERS}
+
+        for future in as_completed(futures):
+            folder = futures[future]
+            try:
+                print(future.result())
+            except Exception:
+                print(f"{folder}: failed, see log file")
+
+if __name__ == "__main__":
+    main()
